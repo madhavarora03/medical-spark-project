@@ -1,3 +1,6 @@
+from typing import List
+
+import numpy as np
 import pandas as pd
 from pyspark.sql.functions import col, when
 
@@ -41,3 +44,92 @@ def load_data(path: str) -> pd.DataFrame:
     )
 
     return df.toPandas()
+
+
+def to_one_hot(dataframe: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
+    """
+    Convert columns in dataframe to one-hot encoding.
+    Args:
+        dataframe (dataframe): pandas dataframe containing covariates
+        columns (list of strings): list categorical column names to one hot encode
+    Returns:
+        one_hot_df (dataframe): dataframe with categorical columns encoded
+                            as binary variables
+    """
+
+    one_hot_df = pd.get_dummies(
+        dataframe, columns=columns, drop_first=True, dtype=np.float64
+    )
+
+    return one_hot_df
+
+
+def hazard_ratio(
+        case_1: np.ndarray, case_2: np.ndarray, cox_params: np.ndarray
+) -> float:
+    """
+    Return the hazard ratio of case_1 : case_2 using
+    the coefficients of the cox model.
+
+    Args:
+        case_1 (np.array): (1 x d) array of covariates
+        case_2 (np.array): (1 x d) array of covariates
+        model (np.array): (1 x d) array of cox model coefficients
+    Returns:
+        hazard_ratio (float): hazard ratio of case_1 : case_2
+    """
+
+    hr = np.exp(cox_params.dot((case_1 - case_2).T))
+
+    return hr
+
+
+def harrell_c(y_true: np.ndarray, scores: np.ndarray, event: np.ndarray) -> float:
+    """
+    Compute Harrel C-index given true event/censoring times,
+    model output, and event indicators.
+
+    Args:
+        y_true (array): array of true event times
+        scores (array): model risk scores
+        event (array): indicator, 1 if event occurred at that index, 0 for censorship
+    Returns:
+        result (float): C-index metric
+    """
+
+    n = len(y_true)
+    assert len(scores) == n and len(event) == n
+
+    concordant = 0.0
+    permissible = 0.0
+    ties = 0.0
+
+    result = 0.0
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if event[i] == 1 or event[j] == 1:
+                if event[i] == 1 and event[j] == 1:
+                    permissible += 1.0
+                    if scores[i] == scores[j]:
+                        ties += 1.0
+                    elif y_true[i] < y_true[j] and scores[i] > scores[j]:
+                        concordant += 1.0
+                    elif y_true[i] > y_true[j] and scores[i] < scores[j]:
+                        concordant += 1.0
+                elif event[i] != event[j]:
+                    censored = j
+                    uncensored = i
+                    if event[i] == 0:
+                        censored = i
+                        uncensored = j
+                    if y_true[uncensored] <= y_true[censored]:
+                        permissible += 1.0
+                        if scores[uncensored] == scores[censored]:
+                            ties += 1.0
+                        if scores[uncensored] > scores[censored]:
+                            concordant += 1.0
+
+    result = (concordant + 0.5 * ties) / permissible
+
+    return result
