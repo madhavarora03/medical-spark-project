@@ -6,6 +6,7 @@ from lifelines import CoxPHFitter
 from sklearn.model_selection import train_test_split
 
 from util import *
+from setup_r import *
 
 matplotlib.use("Qt5Agg")
 warnings.filterwarnings("ignore")
@@ -49,13 +50,13 @@ def main():
     mean = df_train.loc[:, continuous_columns].mean()
     std = df_train.loc[:, continuous_columns].std()
     df_train.loc[:, continuous_columns] = (
-                                                  df_train.loc[:, continuous_columns] - mean
-                                          ) / std
+        df_train.loc[:, continuous_columns] - mean
+    ) / std
 
     df_val.loc[:, continuous_columns] = (df_val.loc[:, continuous_columns] - mean) / std
     df_test.loc[:, continuous_columns] = (
-                                                 df_test.loc[:, continuous_columns] - mean
-                                         ) / std
+        df_test.loc[:, continuous_columns] - mean
+    ) / std
 
     to_encode = ["edema", "stage"]
 
@@ -97,6 +98,42 @@ def main():
     print("Train:", cox_train_scores)
     print("Val:", cox_val_scores)
     print("Test:", cox_test_scores)
+
+    model = forest.rfsrc(
+        ro.Formula("Surv(time, status) ~ ."),
+        data=df_train,
+        ntree=300,
+        nodedepth=5,
+        seed=-1,
+    )
+
+    print(f"\nModel summary:\n{model}")
+
+    result = R.predict(model, newdata=df_val)
+    scores = np.array(result.rx("predicted")[0])
+
+    print("Cox Model Validation Score:", cox_val_scores)
+    print(
+        "Survival Forest Validation Score:",
+        harrell_c(df_val["time"].values, scores, df_val["status"].values),
+    )
+
+    result = R.predict(model, newdata=df_test)
+    scores = np.array(result.rx("predicted")[0])
+
+    print("Cox Model Test Score:", cox_test_scores)
+    print(
+        "Survival Forest Validation Score:",
+        harrell_c(df_test["time"].values, scores, df_test["status"].values),
+    )
+
+    vimps = np.array(forest.vimp(model).rx("importance")[0])
+
+    y = np.arange(len(vimps))
+    plt.barh(y, np.abs(vimps))
+    plt.yticks(y, df_train.drop(["time", "status"], axis=1).columns)
+    plt.title("VIMP (absolute value)")
+    plt.show()
 
 
 if __name__ == "__main__":
